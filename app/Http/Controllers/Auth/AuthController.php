@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Http\Requests\LoginFormRequest;
 use Illuminate\Support\Facades\Auth;
+use App\Models\User;
 
 class AuthController extends Controller
 {
@@ -25,11 +26,44 @@ class AuthController extends Controller
         //dd($request->all());
         $credentials = $request->only('email', 'password');
 
-        if (Auth::attempt($credentials)) {
-            $request->session()->regenerate();
-            //return redirect()->route('home')->with('login_success', 'ログイン成功しました！');
-            return redirect()->route('home')->with('success', 'ログイン成功しました！');
-        }
+        // ①アカウントがロックされていたら弾く
+        $user = User::where('email', '=', $credentials['email'])->first();
+
+        if (!is_null($user)) {
+            if ($user->locked_flg === 1) {
+                return back()->withErrors([
+                'danger' => 'アカウントがロックされています。',
+                ]);
+            }
+
+            if (Auth::attempt($credentials)) {
+                $request->session()->regenerate();
+                // ②成功したらエラーカウントを0にする
+                if ($user->error_count > 0) {
+                    $user->error_count = 0;
+                    $user->save();
+                }
+                
+                //return redirect()->route('home')->with('login_success', 'ログイン成功しました！');
+                return redirect()->route('home')->with('success', 'ログイン成功しました！');
+            }
+
+            // ③ログイン失敗したらエラーカウントを１増やす
+            $user->error_count = $user->error_count + 1;
+
+            // ④エラーカウントが６以上の場合はアカウントをロックする
+            if ($user->error_count > 5) {
+                $user->locked_flg = 1;
+                $user->save();
+
+                return back()->withErrors([
+                    'danger' => 'アカウントがロックされました。解除したい場合は運営者に連絡してください。',
+                ]);
+            }
+
+            $user->save();
+
+        }        
         //return back()->withErrors([
         //    'login_error' => 'メールアドレスかパスワードが間違っています。',
         return back()->withErrors([
